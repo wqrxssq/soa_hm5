@@ -1,0 +1,298 @@
+{
+  "uid": "movie-analytics",
+  "title": "Movie analytics",
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "day",
+        "type": "textbox",
+        "label": "Top day",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Retention Cohort Heatmap",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "WITH cohort AS (SELECT user_id, minIf(event_date, view_started > 0) AS cohort_date FROM analytics.user_day GROUP BY user_id HAVING cohort_date > toDate('1970-01-01')) SELECT toString(c.cohort_date) AS cohort, if(addDays(c.cohort_date, 0) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 0))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_0, if(addDays(c.cohort_date, 1) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 1))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_1, if(addDays(c.cohort_date, 2) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 2))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_2, if(addDays(c.cohort_date, 3) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 3))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_3, if(addDays(c.cohort_date, 4) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 4))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_4, if(addDays(c.cohort_date, 5) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 5))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_5, if(addDays(c.cohort_date, 6) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 6))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_6, if(addDays(c.cohort_date, 7) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 7))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_7 FROM cohort AS c LEFT JOIN analytics.user_day AS u ON u.user_id = c.user_id AND u.event_date >= c.cohort_date AND u.event_date <= addDays(c.cohort_date, 7) GROUP BY c.cohort_date ORDER BY c.cohort_date"
+        }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cohort"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cohort"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_0"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 0"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_1"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 1"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_2"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 2"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_3"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 3"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_4"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 4"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_5"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 5"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_6"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 6"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "day_7"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Day 7"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "DAU",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS dau FROM analytics.metric_points FINAL WHERE metric_name = 'dau' ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "View conversion",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS conversion FROM analytics.metric_points FINAL WHERE metric_name = 'conversion' ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Average watch time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS avg_watch_seconds FROM analytics.metric_points FINAL WHERE metric_name = 'avg_watch_seconds' ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Top movies",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xTickLabelRotation": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT movie_id, value AS views FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' AND metric_date = if(length('${day}') = 10, toDate('${day}'), (SELECT metric_date FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' GROUP BY metric_date ORDER BY sum(value) DESC, metric_date DESC LIMIT 1)) AND computed_at = (SELECT max(computed_at) FROM analytics.metric_points WHERE metric_name = 'top_movie_views' AND metric_date = if(length('${day}') = 10, toDate('${day}'), (SELECT metric_date FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' GROUP BY metric_date ORDER BY sum(value) DESC, metric_date DESC LIMIT 1))) ORDER BY views DESC, movie_id ASC"
+        }
+      ]
+    }
+  ]
+}

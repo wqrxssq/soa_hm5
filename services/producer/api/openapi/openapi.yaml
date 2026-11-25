@@ -1,0 +1,126 @@
+openapi: 3.0.3
+info:
+  title: Movie producer
+  version: 1.0.0
+  description: |
+    Accepts an online-cinema event and publishes it to the Kafka topic `movie-events`.
+    The service generates `event_id`; the request body does not include it.
+
+servers:
+  - url: /
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Process health
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /events:
+    post:
+      operationId: publishEvent
+      summary: Publish an event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventRequest"
+      responses:
+        "201":
+          description: Event was written to Kafka
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventAccepted"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Kafka did not accept the message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  responses:
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    EventAccepted:
+      type: object
+      additionalProperties: false
+      required: [event_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+
+    EventRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, movie_id, event_type, timestamp, device_type, session_id]
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+        movie_id:
+          type: string
+          minLength: 1
+        event_type:
+          $ref: "#/components/schemas/EventType"
+        timestamp:
+          type: string
+          format: date-time
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        session_id:
+          type: string
+          minLength: 1
+        progress_seconds:
+          type: integer
+          minimum: 0
+          nullable: true
+
+    EventType:
+      type: string
+      enum: [VIEW_STARTED, VIEW_FINISHED, VIEW_PAUSED, VIEW_RESUMED, LIKED, SEARCHED]
+
+    DeviceType:
+      type: string
+      enum: [MOBILE, DESKTOP, TV, TABLET]
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+          enum: [VALIDATION_ERROR, UNAVAILABLE, INTERNAL_ERROR, NOT_FOUND, METHOD_NOT_ALLOWED]
+        message:
+          type: string
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true

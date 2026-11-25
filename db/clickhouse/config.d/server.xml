@@ -1,0 +1,17 @@
+<clickhouse>
+    <!-- This directory replaces the image config.d, including the file that listens on every interface. -->
+    <listen_host>::</listen_host>
+    <listen_host>0.0.0.0</listen_host>
+    <listen_try>1</listen_try>
+    <timezone>UTC</timezone>
+    <profiles>
+        <default>
+            <format_avro_schema_registry_url>http://schema-registry:8081</format_avro_schema_registry_url>
+        </default>
+    </profiles>
+    <kafka>
+        <consumer>
+            <auto_offset_reset>smallest</auto_offset_reset>
+        </consumer>
+    </kafka>
+</clickhouse>
