@@ -57,11 +57,14 @@ func (c *Client) PutDay(ctx context.Context, day time.Time, points []metrics.Poi
 	if err != nil {
 		return err
 	}
-	key := fmt.Sprintf("daily/%s/aggregates.json", day.UTC().Format(time.DateOnly))
-	_, err = c.api.PutObject(ctx, c.bucket, key, bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{
+	_, err = c.api.PutObject(ctx, c.bucket, objectKey(day), bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{
 		ContentType: "application/json",
 	})
 	return err
+}
+
+func objectKey(day time.Time) string {
+	return fmt.Sprintf("daily/%s/aggregates.json", day.UTC().Format(time.DateOnly))
 }
 
 func marshal(points []metrics.Point) ([]byte, error) {

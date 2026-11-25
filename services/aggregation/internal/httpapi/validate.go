@@ -88,6 +88,23 @@ func collectFields(err error, out *[]map[string]string) {
 		}
 		return
 	}
+	var requestErr *openapi3filter.RequestError
+	if errors.As(err, &requestErr) && requestErr.Parameter != nil {
+		// A parameter value is a scalar, so its schema error has no JSON pointer to name the field.
+		reason := requestErr.Reason
+		var schemaErr *openapi3.SchemaError
+		if errors.As(requestErr.Err, &schemaErr) && schemaErr.Reason != "" {
+			reason = schemaErr.Reason
+		}
+		if reason == "" && requestErr.Err != nil {
+			reason = requestErr.Err.Error()
+		}
+		if reason == "" {
+			reason = requestErr.Error()
+		}
+		*out = append(*out, map[string]string{"field": requestErr.Parameter.Name, "violation": reason})
+		return
+	}
 	var schemaErr *openapi3.SchemaError
 	if errors.As(err, &schemaErr) {
 		before := len(*out)
@@ -108,22 +125,10 @@ func collectFields(err error, out *[]map[string]string) {
 		*out = append(*out, map[string]string{"field": field, "violation": reason})
 		return
 	}
-	var requestErr *openapi3filter.RequestError
 	if errors.As(err, &requestErr) {
-		if requestErr.Parameter != nil && requestErr.Err == nil {
-			*out = append(*out, map[string]string{
-				"field":     requestErr.Parameter.Name,
-				"violation": requestErr.Reason,
-			})
-			return
-		}
 		before := len(*out)
 		collectFields(requestErr.Err, out)
 		if len(*out) == before {
-			field := "body"
-			if requestErr.Parameter != nil {
-				field = requestErr.Parameter.Name
-			}
 			reason := requestErr.Reason
 			if requestErr.Err != nil && reason == "" {
 				reason = requestErr.Err.Error()
@@ -131,7 +136,7 @@ func collectFields(err error, out *[]map[string]string) {
 			if reason == "" {
 				reason = requestErr.Error()
 			}
-			*out = append(*out, map[string]string{"field": field, "violation": reason})
+			*out = append(*out, map[string]string{"field": "body", "violation": reason})
 		}
 	}
 }

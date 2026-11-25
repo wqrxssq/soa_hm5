@@ -37,24 +37,69 @@ func (c *ClickHouse) Close() error {
 	return c.conn.Close()
 }
 
-func (c *ClickHouse) CountRecent(ctx context.Context) (uint64, error) {
-	var n uint64
-	err := c.conn.QueryRow(ctx, `
-		SELECT toUInt64(count())
+// RawCounts returns the number of stored raw rows per date starting at from. The scheduler
+// compares it between ticks to find days that received events.
+func (c *ClickHouse) RawCounts(ctx context.Context, from time.Time) (map[string]uint64, error) {
+	rows, err := c.conn.Query(ctx, `
+		SELECT toString(event_date), toUInt64(count())
 		FROM analytics.movie_events
-		WHERE event_date >= today() - 7
-	`).Scan(&n)
-	return n, err
+		WHERE event_date >= toDate(?)
+		GROUP BY event_date
+	`, from.UTC().Format(time.DateOnly))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]uint64{}
+	for rows.Next() {
+		var day string
+		var n uint64
+		if err := rows.Scan(&day, &n); err != nil {
+			return nil, err
+		}
+		out[day] = n
+	}
+	return out, rows.Err()
 }
 
+// MissingUserDays lists raw dates that have no user_day partition yet. Cohorts are found by
+// the first active day, so every older day has to be present.
+func (c *ClickHouse) MissingUserDays(ctx context.Context) ([]time.Time, error) {
+	rows, err := c.conn.Query(ctx, `
+		SELECT DISTINCT toString(event_date) AS day
+		FROM analytics.movie_events
+		WHERE event_date NOT IN (SELECT DISTINCT event_date FROM analytics.user_day)
+		ORDER BY day
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []time.Time
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		day, err := time.Parse(time.DateOnly, raw)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, day)
+	}
+	return out, rows.Err()
+}
+
+// RebuildUserDay fills a staging partition and swaps it in with REPLACE PARTITION, so
+// readers see either the old day or the new one, never an empty partition.
 func (c *ClickHouse) RebuildUserDay(ctx context.Context, day time.Time) error {
 	partition := day.UTC().Format(time.DateOnly)
-	err := c.conn.Exec(ctx, fmt.Sprintf("ALTER TABLE analytics.user_day DROP PARTITION '%s'", partition))
-	if err != nil && !missingPartition(err) {
+	dropStaging := fmt.Sprintf("ALTER TABLE analytics.user_day_staging DROP PARTITION '%s'", partition)
+	if err := c.conn.Exec(ctx, dropStaging); err != nil {
 		return err
 	}
-	return c.conn.Exec(ctx, `
-		INSERT INTO analytics.user_day
+	err := c.conn.Exec(ctx, `
+		INSERT INTO analytics.user_day_staging
 		SELECT
 			event_date,
 			user_id,
@@ -63,10 +108,18 @@ func (c *ClickHouse) RebuildUserDay(ctx context.Context, day time.Time) error {
 			toUInt64(countIf(event_type = 'VIEW_FINISHED')),
 			toInt64(sumIf(ifNull(progress_seconds, 0), event_type = 'VIEW_FINISHED')),
 			toUInt64(countIf(event_type = 'VIEW_FINISHED' AND progress_seconds IS NOT NULL))
-		FROM analytics.movie_events
+		FROM analytics.movie_events FINAL
 		WHERE event_date = toDate(?)
 		GROUP BY event_date, user_id
 	`, partition)
+	if err != nil {
+		return err
+	}
+	replace := fmt.Sprintf("ALTER TABLE analytics.user_day REPLACE PARTITION '%s' FROM analytics.user_day_staging", partition)
+	if err := c.conn.Exec(ctx, replace); err != nil {
+		return err
+	}
+	return c.conn.Exec(ctx, dropStaging)
 }
 
 func (c *ClickHouse) Daily(ctx context.Context, day time.Time) (metrics.Daily, error) {
@@ -82,7 +135,7 @@ func (c *ClickHouse) Daily(ctx context.Context, day time.Time) (metrics.Daily, e
 				CAST(NULL AS Nullable(Float64)),
 				avgIf(toFloat64(progress_seconds), event_type = 'VIEW_FINISHED')
 			)
-		FROM analytics.movie_events
+		FROM analytics.movie_events FINAL
 		WHERE event_date = toDate(?)
 	`, day.UTC().Format(time.DateOnly)).Scan(&daily.RawRows, &daily.DAU, &daily.Started, &daily.Finished, &daily.AvgWatch)
 	return daily, err
@@ -91,7 +144,7 @@ func (c *ClickHouse) Daily(ctx context.Context, day time.Time) (metrics.Daily, e
 func (c *ClickHouse) MovieViews(ctx context.Context, day time.Time) ([]metrics.MovieViews, error) {
 	rows, err := c.conn.Query(ctx, `
 		SELECT movie_id, toUInt64(count())
-		FROM analytics.movie_events
+		FROM analytics.movie_events FINAL
 		WHERE event_date = toDate(?) AND event_type = 'VIEW_STARTED'
 		GROUP BY movie_id
 	`, day.UTC().Format(time.DateOnly))
@@ -110,34 +163,38 @@ func (c *ClickHouse) MovieViews(ctx context.Context, day time.Time) ([]metrics.M
 	return out, rows.Err()
 }
 
-func (c *ClickHouse) Retention(ctx context.Context, days []time.Time) ([]metrics.Cohort, error) {
-	if len(days) != 3 {
-		return nil, fmt.Errorf("retention expects 3 cohort dates")
+// Retention reads user_day: the cohort is the first day with VIEW_STARTED, a return is any
+// user_day row on day 1 or day 7 of life.
+func (c *ClickHouse) Retention(ctx context.Context, cohorts []time.Time) ([]metrics.Cohort, error) {
+	if len(cohorts) == 0 {
+		return nil, nil
 	}
-	args := []any{
-		days[0].UTC().Format(time.DateOnly),
-		days[1].UTC().Format(time.DateOnly),
-		days[2].UTC().Format(time.DateOnly),
+	latest := cohorts[0]
+	for _, day := range cohorts {
+		if day.After(latest) {
+			latest = day
+		}
 	}
-	rows, err := c.conn.Query(ctx, `
-		WITH per_user AS (
-			SELECT
-				user_id,
-				minIf(event_date, event_type = 'VIEW_STARTED') AS cohort_date,
-				groupUniqArray(32)(event_date) AS active_days
-			FROM analytics.movie_events
+	rows, err := c.conn.Query(ctx, fmt.Sprintf(`
+		WITH cohort AS (
+			SELECT user_id, min(event_date) AS cohort_date
+			FROM analytics.user_day
+			WHERE view_started > 0 AND event_date <= %s
 			GROUP BY user_id
-			HAVING countIf(event_type = 'VIEW_STARTED') > 0
-			   AND cohort_date IN (toDate(?), toDate(?), toDate(?))
+			HAVING cohort_date IN (%s)
 		)
 		SELECT
-			toString(cohort_date),
-			toUInt64(uniqExact(user_id)),
-			toUInt64(uniqExactIf(user_id, has(active_days, addDays(cohort_date, 1)))),
-			toUInt64(uniqExactIf(user_id, has(active_days, addDays(cohort_date, 7))))
-		FROM per_user
-		GROUP BY cohort_date
-	`, args...)
+			toString(c.cohort_date),
+			toUInt64(uniqExact(c.user_id)),
+			toUInt64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 1))),
+			toUInt64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 7)))
+		FROM cohort AS c
+		LEFT JOIN analytics.user_day AS u
+			ON u.user_id = c.user_id
+			AND u.event_date >= addDays(c.cohort_date, 1)
+			AND u.event_date <= addDays(c.cohort_date, 7)
+		GROUP BY c.cohort_date
+	`, dateLiteral(latest), dateList(cohorts)))
 	if err != nil {
 		return nil, err
 	}
@@ -158,28 +215,75 @@ func (c *ClickHouse) Retention(ctx context.Context, days []time.Time) ([]metrics
 	return out, rows.Err()
 }
 
-func (c *ClickHouse) InsertMetrics(ctx context.Context, points []metrics.Point) error {
+// WriteMetrics inserts the new points and a tombstone for every stored key of the scope
+// that the calculation no longer produces. One batch keeps the swap atomic for readers.
+func (c *ClickHouse) WriteMetrics(ctx context.Context, scope metrics.Scope, points []metrics.Point) error {
+	existing, err := c.metricKeys(ctx, scope)
+	if err != nil {
+		return err
+	}
+	stale := metrics.Stale(scope, existing, points)
 	batch, err := c.conn.PrepareBatch(ctx, `
 		INSERT INTO analytics.metric_points
-		(metric_date, metric_name, movie_id, cohort_day, value, computed_at)
+		(metric_date, metric_name, movie_id, cohort_day, value, computed_at, is_deleted)
 	`)
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 	for _, point := range points {
-		if err := batch.Append(point.Date.UTC(), point.Name, point.MovieID, point.CohortDay, point.Value, point.ComputedAt.UTC()); err != nil {
+		if err := batch.Append(point.Date.UTC(), point.Name, point.MovieID, point.CohortDay, point.Value, point.ComputedAt.UTC(), uint8(0)); err != nil {
+			return err
+		}
+	}
+	for _, key := range stale {
+		date, err := time.Parse(time.DateOnly, key.Date)
+		if err != nil {
+			return err
+		}
+		if err := batch.Append(date, key.Name, key.MovieID, key.CohortDay, (*float64)(nil), now, uint8(1)); err != nil {
 			return err
 		}
 	}
 	return batch.Send()
 }
 
-func missingPartition(err error) bool {
-	if err == nil {
-		return false
+func (c *ClickHouse) metricKeys(ctx context.Context, scope metrics.Scope) ([]metrics.Key, error) {
+	names := make([]string, 0, len(metrics.DayMetrics))
+	for _, name := range metrics.DayMetrics {
+		names = append(names, "'"+name+"'")
 	}
-	text := err.Error()
-	return strings.Contains(text, "doesn't exist") || strings.Contains(text, "DOESNT_EXIST")
+	rows, err := c.conn.Query(ctx, fmt.Sprintf(`
+		SELECT toString(metric_date), metric_name, movie_id, cohort_day
+		FROM analytics.metric_points FINAL
+		WHERE (metric_date = %s AND metric_name IN (%s))
+		   OR (metric_name = '%s' AND metric_date IN (%s))
+	`, dateLiteral(scope.Day), strings.Join(names, ", "), metrics.Retention, dateList(scope.Cohorts)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []metrics.Key
+	for rows.Next() {
+		var key metrics.Key
+		if err := rows.Scan(&key.Date, &key.Name, &key.MovieID, &key.CohortDay); err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, rows.Err()
+}
+
+func dateLiteral(day time.Time) string {
+	return "toDate('" + day.UTC().Format(time.DateOnly) + "')"
+}
+
+func dateList(days []time.Time) string {
+	items := make([]string, 0, len(days))
+	for _, day := range days {
+		items = append(items, dateLiteral(day))
+	}
+	return strings.Join(items, ", ")
 }
 
 func wait(ctx context.Context, name string, op func(context.Context) error) error {

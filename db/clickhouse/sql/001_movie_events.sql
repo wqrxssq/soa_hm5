@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS analytics.movie_events (
     progress_seconds Nullable(Int32),
     event_date Date
 )
-ENGINE = MergeTree
+ENGINE = ReplacingMergeTree
 PARTITION BY event_date
 ORDER BY (event_date, user_id, timestamp, event_id);
 

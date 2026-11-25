@@ -18,7 +18,8 @@
         "current": {
           "text": "",
           "value": ""
-        }
+        },
+        "description": "YYYY-MM-DD. Empty means the last full day in the time range."
       }
     ]
   },
@@ -28,7 +29,7 @@
       "type": "table",
       "title": "Retention Cohort Heatmap",
       "gridPos": {
-        "h": 9,
+        "h": 13,
         "w": 24,
         "x": 0,
         "y": 0
@@ -47,10 +48,40 @@
           "editorType": "sql",
           "queryType": "table",
           "format": 1,
-          "rawSql": "WITH cohort AS (SELECT user_id, minIf(event_date, view_started > 0) AS cohort_date FROM analytics.user_day GROUP BY user_id HAVING cohort_date > toDate('1970-01-01')) SELECT toString(c.cohort_date) AS cohort, if(addDays(c.cohort_date, 0) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 0))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_0, if(addDays(c.cohort_date, 1) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 1))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_1, if(addDays(c.cohort_date, 2) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 2))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_2, if(addDays(c.cohort_date, 3) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 3))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_3, if(addDays(c.cohort_date, 4) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 4))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_4, if(addDays(c.cohort_date, 5) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 5))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_5, if(addDays(c.cohort_date, 6) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 6))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_6, if(addDays(c.cohort_date, 7) > today(), '', concat(toString(toUInt16(round(100 * toFloat64(uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 7))) / toFloat64(uniqExact(c.user_id))))), '%')) AS day_7 FROM cohort AS c LEFT JOIN analytics.user_day AS u ON u.user_id = c.user_id AND u.event_date >= c.cohort_date AND u.event_date <= addDays(c.cohort_date, 7) GROUP BY c.cohort_date ORDER BY c.cohort_date"
+          "rawSql": "WITH cohort AS (SELECT user_id, min(event_date) AS cohort_date FROM analytics.user_day WHERE view_started > 0 GROUP BY user_id HAVING $__dateFilter(cohort_date)) SELECT toString(c.cohort_date) AS cohort, uniqExact(c.user_id) AS users, if(addDays(c.cohort_date, 0) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 0)) / uniqExact(c.user_id)) AS day_0, if(addDays(c.cohort_date, 1) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 1)) / uniqExact(c.user_id)) AS day_1, if(addDays(c.cohort_date, 2) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 2)) / uniqExact(c.user_id)) AS day_2, if(addDays(c.cohort_date, 3) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 3)) / uniqExact(c.user_id)) AS day_3, if(addDays(c.cohort_date, 4) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 4)) / uniqExact(c.user_id)) AS day_4, if(addDays(c.cohort_date, 5) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 5)) / uniqExact(c.user_id)) AS day_5, if(addDays(c.cohort_date, 6) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 6)) / uniqExact(c.user_id)) AS day_6, if(addDays(c.cohort_date, 7) > today(), NULL, uniqExactIf(c.user_id, u.event_date = addDays(c.cohort_date, 7)) / uniqExact(c.user_id)) AS day_7 FROM cohort AS c LEFT JOIN analytics.user_day AS u ON u.user_id = c.user_id AND u.event_date >= c.cohort_date AND u.event_date <= addDays(c.cohort_date, 7) GROUP BY c.cohort_date ORDER BY c.cohort_date"
         }
       ],
       "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 0,
+          "min": 0,
+          "max": 1,
+          "noValue": "",
+          "color": {
+            "mode": "continuous-RdYlGr"
+          },
+          "custom": {
+            "align": "center",
+            "cellOptions": {
+              "type": "color-background",
+              "mode": "basic"
+            }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "",
+                  "color": "transparent",
+                  "index": 0
+                }
+              }
+            }
+          ]
+        },
         "overrides": [
           {
             "matcher": {
@@ -61,6 +92,46 @@
               {
                 "id": "displayName",
                 "value": "Cohort"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "users"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Users"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
               }
             ]
           },
@@ -161,6 +232,11 @@
             ]
           }
         ]
+      },
+      "description": "Share of a cohort (users by the day of their first VIEW_STARTED) active on each day of life. Days that have not happened yet stay empty.",
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
       }
     },
     {
@@ -171,7 +247,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 9
+        "y": 13
       },
       "datasource": {
         "type": "grafana-clickhouse-datasource",
@@ -192,7 +268,7 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS dau FROM analytics.metric_points FINAL WHERE metric_name = 'dau' ORDER BY time"
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS dau FROM analytics.metric_points FINAL WHERE metric_name = 'dau' AND $__dateFilter(metric_date) ORDER BY time"
         }
       ]
     },
@@ -204,7 +280,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 9
+        "y": 13
       },
       "datasource": {
         "type": "grafana-clickhouse-datasource",
@@ -225,7 +301,7 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS conversion FROM analytics.metric_points FINAL WHERE metric_name = 'conversion' ORDER BY time"
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS conversion FROM analytics.metric_points FINAL WHERE metric_name = 'conversion' AND $__dateFilter(metric_date) ORDER BY time"
         }
       ]
     },
@@ -237,7 +313,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 21
       },
       "datasource": {
         "type": "grafana-clickhouse-datasource",
@@ -258,19 +334,19 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS avg_watch_seconds FROM analytics.metric_points FINAL WHERE metric_name = 'avg_watch_seconds' ORDER BY time"
+          "rawSql": "SELECT toDateTime(metric_date, 'UTC') AS time, value AS avg_watch_seconds FROM analytics.metric_points FINAL WHERE metric_name = 'avg_watch_seconds' AND $__dateFilter(metric_date) ORDER BY time"
         }
       ]
     },
     {
       "id": 5,
       "type": "barchart",
-      "title": "Top movies",
+      "title": "Top movies (Top day, or the last full day in range)",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 21
       },
       "datasource": {
         "type": "grafana-clickhouse-datasource",
@@ -290,7 +366,7 @@
           "editorType": "sql",
           "queryType": "table",
           "format": 1,
-          "rawSql": "SELECT movie_id, value AS views FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' AND metric_date = if(length('${day}') = 10, toDate('${day}'), (SELECT metric_date FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' GROUP BY metric_date ORDER BY sum(value) DESC, metric_date DESC LIMIT 1)) AND computed_at = (SELECT max(computed_at) FROM analytics.metric_points WHERE metric_name = 'top_movie_views' AND metric_date = if(length('${day}') = 10, toDate('${day}'), (SELECT metric_date FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' GROUP BY metric_date ORDER BY sum(value) DESC, metric_date DESC LIMIT 1))) ORDER BY views DESC, movie_id ASC"
+          "rawSql": "SELECT movie_id, value AS views FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' AND metric_date = if(length('${day}') = 10, toDate('${day}'), (SELECT metric_date FROM analytics.metric_points FINAL WHERE metric_name = 'top_movie_views' AND $__dateFilter(metric_date) GROUP BY metric_date ORDER BY metric_date < today() DESC, metric_date DESC LIMIT 1)) ORDER BY views DESC, movie_id ASC"
         }
       ]
     }

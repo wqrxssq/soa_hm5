@@ -13,6 +13,11 @@ const (
 	Retention      = "retention"
 )
 
+// DayMetrics are keyed by the calculated day. Retention is keyed by the cohort date instead.
+var DayMetrics = []string{DAU, AvgWatch, ConversionName, TopMovieViews}
+
+var RetentionDays = []int16{1, 7}
+
 type Point struct {
 	Date       time.Time
 	Name       string
@@ -36,6 +41,50 @@ func (p Point) Key() Key {
 		MovieID:   p.MovieID,
 		CohortDay: p.CohortDay,
 	}
+}
+
+// Scope is the set of keys one recalculation owns. Keys inside it that the new
+// calculation did not produce are stale and get removed.
+type Scope struct {
+	Day     time.Time
+	Cohorts []time.Time
+}
+
+// ScopeFor covers the day itself and the cohorts whose D1 or D7 falls on that day.
+func ScopeFor(day time.Time) Scope {
+	day = DateOnly(day)
+	cohorts := []time.Time{day}
+	for _, n := range RetentionDays {
+		cohorts = append(cohorts, day.AddDate(0, 0, -int(n)))
+	}
+	return Scope{Day: day, Cohorts: cohorts}
+}
+
+func (s Scope) Covers(k Key) bool {
+	if k.Name == Retention {
+		for _, cohort := range s.Cohorts {
+			if cohort.Format(time.DateOnly) == k.Date {
+				return true
+			}
+		}
+		return false
+	}
+	return k.Date == s.Day.Format(time.DateOnly)
+}
+
+// Stale returns keys that exist in storage inside the scope but are absent from points.
+func Stale(scope Scope, existing []Key, points []Point) []Key {
+	fresh := make(map[Key]bool, len(points))
+	for _, point := range points {
+		fresh[point.Key()] = true
+	}
+	var out []Key
+	for _, key := range existing {
+		if scope.Covers(key) && !fresh[key] {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 type MovieViews struct {
@@ -80,15 +129,12 @@ func Top(rows []MovieViews, limit int) []MovieViews {
 	return copied
 }
 
-func Apply(dst map[Key]Point, points []Point) {
-	for _, point := range points {
-		dst[point.Key()] = point
-	}
-}
-
-func Build(day time.Time, daily Daily, movies []MovieViews, cohorts []Cohort, now time.Time) []Point {
-	day = dateOnly(day)
+// Build turns query results into points. A cohort without users gets no retention rows.
+// A day of life that has not started yet relative to now stays NULL instead of 0.
+func Build(scope Scope, daily Daily, movies []MovieViews, cohorts []Cohort, now time.Time) []Point {
+	day := scope.Day
 	now = now.UTC()
+	today := DateOnly(now)
 	dau := float64(daily.DAU)
 	points := []Point{
 		{Date: day, Name: DAU, CohortDay: -1, Value: &dau, ComputedAt: now},
@@ -108,25 +154,27 @@ func Build(day time.Time, daily Daily, movies []MovieViews, cohorts []Cohort, no
 	}
 	found := make(map[string]Cohort, len(cohorts))
 	for _, cohort := range cohorts {
-		found[dateOnly(cohort.Date).Format(time.DateOnly)] = cohort
+		found[DateOnly(cohort.Date).Format(time.DateOnly)] = cohort
 	}
-	for _, cohortDay := range []time.Time{day, day.AddDate(0, 0, -1), day.AddDate(0, 0, -7)} {
-		var d1, d7 *float64
-		if cohort, ok := found[cohortDay.Format(time.DateOnly)]; ok && cohort.Size > 0 {
-			first := float64(cohort.D1Users) / float64(cohort.Size)
-			seventh := float64(cohort.D7Users) / float64(cohort.Size)
-			d1 = &first
-			d7 = &seventh
+	for _, cohortDate := range scope.Cohorts {
+		cohort, ok := found[cohortDate.Format(time.DateOnly)]
+		if !ok || cohort.Size == 0 {
+			continue
 		}
-		points = append(points,
-			Point{Date: cohortDay, Name: Retention, CohortDay: 1, Value: d1, ComputedAt: now},
-			Point{Date: cohortDay, Name: Retention, CohortDay: 7, Value: d7, ComputedAt: now},
-		)
+		returned := map[int16]uint64{1: cohort.D1Users, 7: cohort.D7Users}
+		for _, n := range RetentionDays {
+			var value *float64
+			if !cohortDate.AddDate(0, 0, int(n)).After(today) {
+				share := float64(returned[n]) / float64(cohort.Size)
+				value = &share
+			}
+			points = append(points, Point{Date: cohortDate, Name: Retention, CohortDay: n, Value: value, ComputedAt: now})
+		}
 	}
 	return points
 }
 
-func dateOnly(t time.Time) time.Time {
+func DateOnly(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }

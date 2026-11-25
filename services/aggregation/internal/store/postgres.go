@@ -17,6 +17,13 @@ VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (metric_date, metric_name, movie_id, cohort_day)
 DO UPDATE SET value = EXCLUDED.value, computed_at = EXCLUDED.computed_at`
 
+// deleteScopeSQL removes keys the recalculation owns, so a movie that left the top
+// or a cohort that lost its users does not linger.
+const deleteScopeSQL = `
+DELETE FROM metric_points
+WHERE (metric_date = $1 AND metric_name = ANY($2))
+   OR (metric_name = $3 AND metric_date = ANY($4))`
+
 type Postgres struct {
 	pool *pgxpool.Pool
 }
@@ -37,28 +44,29 @@ func (p *Postgres) Close() {
 	p.pool.Close()
 }
 
-func (p *Postgres) Save(ctx context.Context, day time.Time, points []metrics.Point) error {
+func (p *Postgres) Save(ctx context.Context, scope metrics.Scope, points []metrics.Point) error {
 	attempt := 0
 	return retry.Do(ctx, func() error {
 		attempt++
-		err := p.saveOnce(ctx, day, points)
+		err := p.saveOnce(ctx, scope, points)
 		if err != nil {
-			slog.Warn("postgres write failed", "attempt", attempt, "date", day.UTC().Format(time.DateOnly), "err", err)
+			slog.Warn("postgres write failed", "attempt", attempt, "date", scope.Day.Format(time.DateOnly), "err", err)
 		}
 		return err
 	})
 }
 
-func (p *Postgres) saveOnce(ctx context.Context, day time.Time, points []metrics.Point) error {
+func (p *Postgres) saveOnce(ctx context.Context, scope metrics.Scope, points []metrics.Point) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM metric_points
-		WHERE metric_date = $1 AND metric_name = $2
-	`, day.UTC(), metrics.TopMovieViews); err != nil {
+	cohorts := make([]time.Time, 0, len(scope.Cohorts))
+	for _, cohort := range scope.Cohorts {
+		cohorts = append(cohorts, cohort.UTC())
+	}
+	if _, err := tx.Exec(ctx, deleteScopeSQL, scope.Day.UTC(), metrics.DayMetrics, metrics.Retention, cohorts); err != nil {
 		return err
 	}
 	for _, point := range points {
